@@ -26,12 +26,22 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+enum {
+  IDLE = 0,
+  ON,
+  DIST_ALERT,
+  CONFIG,
+  ALARM
+};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define NUM_SENSORS     4
+#define   ALERT_TIMEOUT       3000
+#define   CLICK_MIN_SEC       50
+#define   CLICK_MAX_SEC       1000
+#define   UNDER_PRESS_SEC     2000
+#define   INTERNAL_DIST_THR   20
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -46,11 +56,14 @@
 uint32_t sensor_channel[NUM_SENSORS] = {ADC_CHANNEL_0,
                                         ADC_CHANNEL_1,
                                         ADC_CHANNEL_2,
-                                        ADC_CHANNEL_3};
+                                        ADC_CHANNEL_3,
+                                        ADC_CHANNEL_4};
 
 volatile uint32_t sensor_sav[NUM_SENSORS];
-uint32_t sensor_val[NUM_SENSORS];
+volatile uint32_t sensor_val[NUM_SENSORS];
 uint32_t tolerance = 100;
+
+uint16_t state = IDLE, prev_state = IDLE;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -59,7 +72,8 @@ static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 uint32_t ADC_ReadChannel(ADC_HandleTypeDef *hadc, uint32_t channel);
-uint32_t Get_SensorDist(uint32_t values[NUM_SENSORS], uint32_t save[NUM_SENSORS]);
+uint32_t Get_SensorDist(volatile uint32_t values[NUM_SENSORS], uint32_t save[NUM_SENSORS]);
+uint32_t Get_InternalDist(volatile uint32_t values[NUM_SENSORS]);
 void Sensor_SaveProfile(void);
 /* USER CODE END PFP */
 
@@ -98,29 +112,149 @@ int main(void)
   MX_GPIO_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  uint8_t sel = 0;
-
-  for (uint8_t i = 0; i < NUM_SENSORS; i++) {
-    sensor_val[i] = ADC_ReadChannel(&hadc1, sensor_channel[i]);
-  }
+  HAL_ADC_Start_IT(&hadc1);
   Sensor_SaveProfile();
+
+  uint32_t sensor_dist = 0;
+  uint32_t alarm_timestamp = HAL_GetTick();
+
+  uint8_t click = 0;
+  uint8_t under_pressure = 0;
+
+  GPIO_PinState btn_state;
+  uint8_t btn_start = 0;
+  uint32_t btn_timestamp;
+  
+  uint8_t config_flag = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    sensor_val[sel] = ADC_ReadChannel(&hadc1, sensor_channel[sel]);
+    HAL_ADC_Start_IT(&hadc1);
+    HAL_Delay(5); // Cambiar delay por flag
 
     if (Get_SensorDist(sensor_val, (uint32_t *)sensor_sav) > tolerance) {
       HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_SET);
     }
     else HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
 
-    if (sel < NUM_SENSORS - 1) sel++;
-    else sel = 0;
+    // Leer botones
+    // Medir tiempo con HAL_GetTick(). Si el tiempo de presión está entre un rango acotado: click
+    // Si el tiempo de presión supera una cantidad: presión extendida
+    // Estando dentro de CONFIG, no salir hasta que se suelte el botón
 
-    HAL_Delay(5);
+    btn_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_3);
+
+    if (btn_state == GPIO_PIN_RESET) {
+      if (btn_start == 0) {
+        btn_start = 1;
+        btn_timestamp = HAL_GetTick();
+      }
+
+      if (HAL_GetTick() - btn_timestamp > UNDER_PRESS_SEC) {
+        under_pressure = 1;
+      }
+    }
+    else {
+      if (btn_start == 1) {
+        btn_start = 0;
+        uint32_t time_pressed = HAL_GetTick() - btn_timestamp;
+        if (time_pressed > CLICK_MIN_SEC && time_pressed < CLICK_MAX_SEC) { 
+          click = 1;
+        }
+
+        under_pressure = 0;
+      }
+      else {
+        click = 0;
+      }
+    }
+
+    // FSM
+    switch (state)
+    {
+    case IDLE:
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+      if (click) {
+        prev_state = IDLE;
+        state = ON;
+      }
+      else if (under_pressure) {
+        prev_state = IDLE;
+        state = CONFIG;
+      }
+      
+      break;
+
+    case ON:
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+      sensor_dist = Get_SensorDist(sensor_val, (uint32_t *)sensor_sav);
+
+      if (sensor_dist > tolerance) {
+        prev_state = ON;
+        alarm_timestamp = HAL_GetTick();
+        state = DIST_ALERT;
+      }
+
+      if (click) {
+        prev_state = ON;
+        state = IDLE;
+      }
+      else if (under_pressure) {
+        prev_state = ON;
+        state = CONFIG;
+      }
+      break;
+
+    case DIST_ALERT:
+      if (HAL_GetTick() - alarm_timestamp > ALERT_TIMEOUT) {
+        state = ALARM;
+        prev_state = DIST_ALERT;
+      }
+
+      sensor_dist = Get_SensorDist(sensor_val, (uint32_t *)sensor_sav);
+      if (sensor_dist <= tolerance) {
+        state = ON;
+        prev_state = DIST_ALERT;
+      }
+      break;
+
+    case CONFIG:
+      if (!under_pressure) {
+        state = prev_state;
+        prev_state = CONFIG;
+        config_flag = 0;
+      }
+      else {
+        if (config_flag == 0) {          
+          HAL_ADC_Start_IT(&hadc1);
+          HAL_Delay(5);
+          Sensor_SaveProfile();
+
+          config_flag = 1;
+        }
+      }
+      break;
+
+    case ALARM:
+      // Encender motores si la distancia interna no es pequeña
+      if (Get_InternalDist(sensor_val) > INTERNAL_DIST_THR) {
+        // ENCENDER
+      }
+      else {}// Mantener apagados
+
+      sensor_dist = Get_SensorDist(sensor_val, (uint32_t *)sensor_sav);
+      if (sensor_dist <= tolerance) {
+        state = ON;
+        prev_state = ALARM;
+        // Apagar motores
+      }
+      break;
+    }
+
+    HAL_Delay(1);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -192,22 +326,20 @@ static void MX_ADC1_Init(void)
   /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV8;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
+  hadc1.Init.ScanConvMode = ADC_SCAN_SEQ_FIXED;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   hadc1.Init.LowPowerAutoWait = DISABLE;
   hadc1.Init.LowPowerAutoPowerOff = DISABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
-  hadc1.Init.NbrOfConversion = 4;
-  hadc1.Init.DiscontinuousConvMode = ENABLE;
+  hadc1.Init.NbrOfConversion = 1;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc1.Init.DMAContinuousRequests = DISABLE;
   hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
-  hadc1.Init.SamplingTimeCommon1 = ADC_SAMPLETIME_1CYCLE_5;
-  hadc1.Init.SamplingTimeCommon2 = ADC_SAMPLETIME_1CYCLE_5;
+  hadc1.Init.SamplingTimeCommon1 = ADC_SAMPLETIME_160CYCLES_5;
   hadc1.Init.OversamplingMode = DISABLE;
   hadc1.Init.TriggerFrequencyMode = ADC_TRIGGER_FREQ_HIGH;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
@@ -218,8 +350,7 @@ static void MX_ADC1_Init(void)
   /** Configure Regular Channel
   */
   sConfig.Channel = ADC_CHANNEL_0;
-  sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLINGTIME_COMMON_1;
+  sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -228,7 +359,6 @@ static void MX_ADC1_Init(void)
   /** Configure Regular Channel
   */
   sConfig.Channel = ADC_CHANNEL_1;
-  sConfig.Rank = ADC_REGULAR_RANK_2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -237,7 +367,6 @@ static void MX_ADC1_Init(void)
   /** Configure Regular Channel
   */
   sConfig.Channel = ADC_CHANNEL_2;
-  sConfig.Rank = ADC_REGULAR_RANK_3;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -246,7 +375,14 @@ static void MX_ADC1_Init(void)
   /** Configure Regular Channel
   */
   sConfig.Channel = ADC_CHANNEL_3;
-  sConfig.Rank = ADC_REGULAR_RANK_4;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_4;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -270,9 +406,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5|GPIO_PIN_7, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : PC8 */
   GPIO_InitStruct.Pin = GPIO_PIN_8;
@@ -281,22 +421,35 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PB3 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB5 PB7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
 }
 
 /* USER CODE BEGIN 4 */
 uint32_t ADC_ReadChannel(ADC_HandleTypeDef *hadc, uint32_t channel) {
-  gConfig.Channel = channel;
-  HAL_ADC_ConfigChannel(hadc, &gConfig);
-  HAL_ADC_Start(hadc);
+  //gConfig.Channel = channel;
+  //HAL_ADC_ConfigChannel(hadc, &gConfig);
+  //HAL_ADC_Start(hadc);
 
-  if (HAL_ADC_PollForConversion(hadc, 5) == HAL_OK) {
+  if (HAL_ADC_PollForConversion(hadc, 0) == HAL_OK) {
     return HAL_ADC_GetValue(hadc);
   }
 
   return 0;
 }
 
-uint32_t Get_SensorDist(uint32_t values[NUM_SENSORS], uint32_t save[NUM_SENSORS]) {
+uint32_t Get_SensorDist(volatile uint32_t values[NUM_SENSORS], uint32_t save[NUM_SENSORS]) {
   float dist = 0;
 
   for (uint8_t i = 0; i < NUM_SENSORS; i++) {
@@ -304,6 +457,23 @@ uint32_t Get_SensorDist(uint32_t values[NUM_SENSORS], uint32_t save[NUM_SENSORS]
   }
 
   return (uint32_t)sqrtf(dist);
+}
+
+uint32_t Get_InternalDist(volatile uint32_t values[NUM_SENSORS]) {
+  float mean, sum = 0.0, std = 0.0;
+
+  for (uint8_t i = 0; i < NUM_SENSORS; i++) {
+    sum += (float)values[i];
+  }
+  mean = sum / NUM_SENSORS;
+
+  sum = 0.0;
+  for (uint8_t i = 0; i < NUM_SENSORS; i++) {
+    sum += powf((float)values[i] - mean, 2);
+  }
+  std = sqrtf(sum);
+
+  return (uint32_t)std;
 }
 
 void Sensor_SaveProfile() {
