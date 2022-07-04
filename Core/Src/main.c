@@ -42,6 +42,7 @@ enum {
 #define   CLICK_MAX_SEC       1000
 #define   UNDER_PRESS_SEC     2000
 #define   INTERNAL_DIST_THR   20
+#define   MOTOR_TOGGLE_TIME   1000 
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -116,6 +117,7 @@ int main(void)
   Sensor_SaveProfile();
 
   uint32_t sensor_dist = 0;
+  uint32_t sensor_int_dist = 0;
   uint32_t alarm_timestamp = HAL_GetTick();
 
   uint8_t click = 0;
@@ -126,6 +128,9 @@ int main(void)
   uint32_t btn_timestamp;
   
   uint8_t config_flag = 0;
+
+  uint8_t motor_state = 0, motor_transition = 0;
+  uint32_t motor_timestamp;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -190,9 +195,11 @@ int main(void)
 
     case ON:
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+      
       sensor_dist = Get_SensorDist(sensor_val, (uint32_t *)sensor_sav);
+      sensor_int_dist = Get_InternalDist(sensor_val);
 
-      if (sensor_dist > tolerance) {
+      if (sensor_dist > tolerance && sensor_int_dist >= INTERNAL_DIST_THR) {
         prev_state = ON;
         alarm_timestamp = HAL_GetTick();
         state = DIST_ALERT;
@@ -212,10 +219,12 @@ int main(void)
       if (HAL_GetTick() - alarm_timestamp > ALERT_TIMEOUT) {
         state = ALARM;
         prev_state = DIST_ALERT;
+        motor_transition = 1;
       }
 
       sensor_dist = Get_SensorDist(sensor_val, (uint32_t *)sensor_sav);
-      if (sensor_dist <= tolerance) {
+      sensor_int_dist = Get_InternalDist(sensor_val);
+      if (sensor_dist <= tolerance || sensor_int_dist < INTERNAL_DIST_THR) {
         state = ON;
         prev_state = DIST_ALERT;
       }
@@ -239,17 +248,38 @@ int main(void)
       break;
 
     case ALARM:
-      // Encender motores si la distancia interna no es pequeña
-      if (Get_InternalDist(sensor_val) > INTERNAL_DIST_THR) {
-        // ENCENDER
+      // ENCENDER
+      if (motor_transition) {
+        motor_state = motor_state == 1 ? 0 : 1;
+        motor_transition = 0;
+        motor_timestamp = HAL_GetTick();
       }
-      else {}// Mantener apagados
+
+      if (HAL_GetTick() - motor_timestamp > MOTOR_TOGGLE_TIME) {
+        if (motor_state) {
+          // HAL_GPIO_WritePin(, , GPIO_PIN_SET);
+          // HAL_GPIO_WritePin(, , GPIO_PIN_SET);
+          motor_transition = 1;
+          motor_state = 0;
+        }
+        else {
+          // HAL_GPIO_WritePin(, , GPIO_PIN_RESET);
+          // HAL_GPIO_WritePin(, , GPIO_PIN_RESET);
+          motor_transition = 1;
+          motor_state = 1;
+        }
+      }
 
       sensor_dist = Get_SensorDist(sensor_val, (uint32_t *)sensor_sav);
-      if (sensor_dist <= tolerance) {
+      sensor_int_dist = Get_InternalDist(sensor_val);
+      if (sensor_dist <= tolerance || sensor_int_dist < INTERNAL_DIST_THR) {
         state = ON;
         prev_state = ALARM;
         // Apagar motores
+        // HAL_GPIO_WritePin(, , GPIO_PIN_RESET);
+        // HAL_GPIO_WritePin(, , GPIO_PIN_RESET);
+        motor_state = 0;
+        motor_transition = 0;
       }
       break;
     }
