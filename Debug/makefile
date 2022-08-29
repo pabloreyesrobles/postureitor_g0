@@ -60,8 +60,8 @@ all: main-build
 main-build: postureitor_g0.elf secondary-outputs
 
 # Tool invocations
-postureitor_g0.elf postureitor_g0.map: $(OBJS) $(USER_OBJS) /home/preyesr/Documentos/Dimetric/postureitor_g0/STM32G070RBTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "postureitor_g0.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m0plus -T"/home/preyesr/Documentos/Dimetric/postureitor_g0/STM32G070RBTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="postureitor_g0.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+postureitor_g0.elf postureitor_g0.map: $(OBJS) $(USER_OBJS) C:\Users\Pablo\Documents\STM32CubeIDE\postureitor_g0\STM32G070RBTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "postureitor_g0.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m0plus -T"C:\Users\Pablo\Documents\STM32CubeIDE\postureitor_g0\STM32G070RBTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="postureitor_g0.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

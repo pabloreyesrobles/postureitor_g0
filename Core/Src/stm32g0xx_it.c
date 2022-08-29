@@ -147,6 +147,7 @@ void ADC1_IRQHandler(void)
 {
   /* USER CODE BEGIN ADC1_IRQn 0 */
   sensor_val[sel++] = HAL_ADC_GetValue(&hadc1);
+
   if (sel == NUM_SENSORS) sel = 0;
   /* USER CODE END ADC1_IRQn 0 */
   HAL_ADC_IRQHandler(&hadc1);

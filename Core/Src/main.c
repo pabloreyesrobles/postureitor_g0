@@ -58,11 +58,16 @@ uint32_t sensor_channel[NUM_SENSORS] = {ADC_CHANNEL_0,
                                         ADC_CHANNEL_1,
                                         ADC_CHANNEL_2,
                                         ADC_CHANNEL_3,
-                                        ADC_CHANNEL_4};
+                                        ADC_CHANNEL_4,
+                                        ADC_CHANNEL_5,
+                                        ADC_CHANNEL_6,
+                                        ADC_CHANNEL_7,
+                                        ADC_CHANNEL_17,
+                                        ADC_CHANNEL_18};
 
 volatile uint32_t sensor_sav[NUM_SENSORS];
 volatile uint32_t sensor_val[NUM_SENSORS];
-uint32_t tolerance = 100;
+uint32_t tolerance = 400;
 
 uint16_t state = IDLE, prev_state = IDLE;
 /* USER CODE END PV */
@@ -114,6 +119,7 @@ int main(void)
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
   HAL_ADC_Start_IT(&hadc1);
+  HAL_Delay(5);
   Sensor_SaveProfile();
 
   uint32_t sensor_dist = 0;
@@ -128,6 +134,7 @@ int main(void)
   uint32_t btn_timestamp;
   
   uint8_t config_flag = 0;
+  uint8_t blink = 0;
 
   uint8_t motor_state = 0, motor_transition = 0;
   uint32_t motor_timestamp;
@@ -183,6 +190,7 @@ int main(void)
     case IDLE:
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
       if (click) {
+
         prev_state = IDLE;
         state = ON;
       }
@@ -228,6 +236,11 @@ int main(void)
         state = ON;
         prev_state = DIST_ALERT;
       }
+
+      if (click) {
+        prev_state = DIST_ALERT;
+        state = IDLE;
+      }
       break;
 
     case CONFIG:
@@ -235,6 +248,7 @@ int main(void)
         state = prev_state;
         prev_state = CONFIG;
         config_flag = 0;
+        blink = 0;
       }
       else {
         if (config_flag == 0) {          
@@ -244,27 +258,44 @@ int main(void)
 
           config_flag = 1;
         }
+        else {
+          if (!blink) {
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+            HAL_Delay(100);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+            HAL_Delay(100);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+            HAL_Delay(100);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+            HAL_Delay(100);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+            HAL_Delay(100);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+            HAL_Delay(100);
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+            blink = 1;
+          }
+        }
       }
       break;
 
     case ALARM:
       // ENCENDER
       if (motor_transition) {
-        motor_state = motor_state == 1 ? 0 : 1;
         motor_transition = 0;
         motor_timestamp = HAL_GetTick();
       }
 
       if (HAL_GetTick() - motor_timestamp > MOTOR_TOGGLE_TIME) {
         if (motor_state) {
-          // HAL_GPIO_WritePin(, , GPIO_PIN_SET);
-          // HAL_GPIO_WritePin(, , GPIO_PIN_SET);
+          HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+          HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_SET);
           motor_transition = 1;
           motor_state = 0;
         }
         else {
-          // HAL_GPIO_WritePin(, , GPIO_PIN_RESET);
-          // HAL_GPIO_WritePin(, , GPIO_PIN_RESET);
+          HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
+          HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
           motor_transition = 1;
           motor_state = 1;
         }
@@ -276,10 +307,19 @@ int main(void)
         state = ON;
         prev_state = ALARM;
         // Apagar motores
-        // HAL_GPIO_WritePin(, , GPIO_PIN_RESET);
-        // HAL_GPIO_WritePin(, , GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
         motor_state = 0;
         motor_transition = 0;
+      }
+
+      if (click) {
+        motor_state = 0;
+        motor_transition = 0;
+        prev_state = ALARM;
+        state = IDLE;
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
       }
       break;
     }
@@ -417,6 +457,46 @@ static void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_6;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_7;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_17;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_18;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN ADC1_Init 2 */
   gConfig = sConfig;
   /* USER CODE END ADC1_Init 2 */
@@ -439,13 +519,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5|GPIO_PIN_7, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PC8 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8;
+  /*Configure GPIO pins : PC6 PC7 PC8 */
+  GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7|GPIO_PIN_8;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
